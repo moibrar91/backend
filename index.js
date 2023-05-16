@@ -1,93 +1,143 @@
-const express = require('express');
-const path = require("path");
-const server = require('./config/server');
-var cors = require('cors')
-const fs = require("fs");
-const https = require('https');
-let pKeyPath = '/etc/ssl/certs/ssl-cert-snakeoil.pem';
-let cPath = '/etc/ssl/certs/ca-certificates.crt';
-const PORT = server.port || 4000;
-const app = express();
-var bodyParser = require('body-parser')
-process.env.TZ = "Asia/Calcutta";
+const validator = require("node-input-validator")
+const ResponseMiddleware = require("../middlewares/ResponseMiddleware.js");
+const helpers = require("../util/helpers.js");
+const { models } = require("../models");
+validator.extend("unique", async function({value, args}){
+    console.log("ValidatorsIndex => unique", args);
 
-app.use(bodyParser.json({limit: '5mb'}));
-app.use(bodyParser.urlencoded({limit: '5mb', extended: true}));
-const fileUpload = require('express-fileupload');
-app.use(fileUpload());
-app.use(cors());
-app.use("/api", require("./src/routes"));
+    let result = null;
 
-
-/*if(fs.existsSync(pKeyPath) && fs.existsSync(cPath)) {
-  var options = {
-    key: fs.readFileSync(pKeyPath),
-    cert: fs.readFileSync(cPath),
-  };
-  
-  https.createServer(options, app).listen(PORT, function(){
-    console.log("Xaphel HTTPS on " + PORT);
-  //require('./src/models')(app);
-  });
-} else {
-  app.listen(PORT, function(err, success) {
-     console.log("Xaphel HTTP ON " + PORT);
-  //require('./src/models')(app);
-  });
-}*/
-
-const http = require('http');
-const socket = http.createServer(app);
-// Socket http://13.234.189.253:4042
-var io = require('socket.io')(8801,{
-  cors: {
-    origin: "*",
-  },
-});
-global.io = io;
-app.set(io);
-
-let activeUsers = [];
-
-io.on("connection", (socket) => {
-  // add new User
-  // console.log("socket connection started");
-  socket.on("new-user-add", (newUserId) => {
-    // if user is not added previously
-    if (!activeUsers.some((user) => user.userId === newUserId)) {
-      activeUsers.push({ userId: newUserId, socketId: socket.id });
-      console.log("New User Connected", activeUsers);
+    if(args.length > 2) {
+        result = await models[args[0]]
+            .findOne({
+                where : {
+                    [args[1]]: value,
+                    [args[2]]: { $not: args[3] }
+                }
+            })
+    } else {
+        result = await models[args[0]]
+            .findOne({
+                where : {
+                    [args[1]]: value
+                }
+            })
     }
-    // send all active users to new user
-    io.emit("get-users", activeUsers);
-  });
+    return !result ? true : false;
+})
 
-  socket.on("disconnect", () => {
-    // remove user from active users
-    activeUsers = activeUsers.filter((user) => user.socketId !== socket.id);
-    console.log("User Disconnected", activeUsers);
-    // send all active users to all users
-    io.emit("get-users", activeUsers);
-  });
 
-  // send message to a specific user
-  socket.on("send-message", (data) => {
-    const { receiverId } = data;
-    const user = activeUsers.find((user) => user.userId === receiverId);
-    console.log("Sending from socket to :", receiverId)
-    console.log("Data: ", data)
-    if (user) {
-      io.to(user.socketId).emit("recieve-message", data);
+/**
+ * to check given id exists in given table
+ * additional column checks can be passed in pairs
+ * e.g exists:table_name,primary_id,col1,value1,col2,value2 and so on
+ * col-value must be in pairs
+ */
+validator.extend("exists", async function({value, args}){
+    console.log("ValidatorsIndex => exists");
+
+    let result = await models[args[0]]
+        .findOne({
+            where: {
+                [args[1]]: value
+            }
+        })
+
+    return result ? true : false
+})
+
+validator.extend("allowedValues", ({value, args}) => {
+    return args.indexOf(value) > -1 ? true : false
+})
+
+module.exports = {
+    //common function to send validation response
+    validate : (v, res, next, req = null) => {
+        console.log("ValidatorsIndex => validate");
+
+        if(v.check().then(function(matched){
+            if(!matched){
+                req.rCode = 0;
+                let message = helpers().getErrorMessage(v.errors)
+
+                ResponseMiddleware(req, res, next, message);
+            }else{
+                next()
+            }
+        }));
+    },
+
+    validations: {
+        general: {
+            requiredNumeric: "required|numeric",
+            required: "required",
+            nullable: "nullable",
+            requiredInt: "required|integer",
+            requiredString: "required|string|maxLength:255",
+            nullableString: "nullable|string|maxLength:255",
+            requiredText: "required|string|maxLength:5000",
+            requiredTodayOrAfterDate: "required|dateAfterToday:today,.|date",
+            requiredDate: "required|date",
+            nullableDate: "nullable|date"
+        },
+        user:{
+          id: "required|exists:users,id",
+          existEmail: "required|string|exists:users,email",
+          email: "required|string|unique:users,email",
+          username: "required|string|unique:users,username"
+        },
+        student_ambassador:{
+          email: "required|string|unique:student_ambassadors,email",
+          mobile: "required|string|unique:student_ambassadors,mobile",
+        },
+        team_request:{
+          email: "required|string|unique:team_requests,email",
+          mobile: "required|string|unique:team_requests,mobile",
+        },
+        college_partnership:{
+          email: "required|string|unique:college_partnerships,email",
+          mobile: "required|string|unique:college_partnerships,mobile",
+        },
+        advertisement:{
+          email: "required|string|unique:advertisements,email",
+          mobile: "required|string|unique:advertisements,mobile",
+        },
+        investor_relation:{
+          email: "required|string|unique:investor_relations,email",
+          mobile: "required|string|unique:investor_relations,mobile",
+        },
+        early_join:{
+          email: "required|string|unique:join_early_users,email"
+        },
+        question:{
+          id: "required|string|exists:questions,id"
+        },
+        comment:{
+          id: "required|string|exists:question_comments,id"
+        },
+        career:{
+          id: "required|string|exists:careers,id"
+        },
+        speciality:{
+          id: "required|string|exists:specializations,id"
+        },
+        skill:{
+          id: "required|string|exists:skills,id"
+        },
+        user_request:{
+          id: "required|string|exists:user_requests,id"
+        },
+        service:{
+          id: "required|string|exists:services,id"
+        },
+        admin:{
+          id: "required|exists:admins,id",
+          existEmail: "required|string|exists:admins,email",
+          email: "required|string|unique:admins,email",
+        },
+        certificate:{
+          id: "required|string|exists:certificates,id"
+        }
+
     }
-  });
-
-  socket.on('notification', (data) => {
-    io.emit('notification', data);
-  });
-});
-
-
-socket.listen(PORT, () => {
-  console.log('Server listening on port ' + PORT);
-  //require('./src/models')(app);
-});
+}
